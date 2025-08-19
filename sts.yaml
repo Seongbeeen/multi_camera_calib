@@ -1,4 +1,4 @@
-name: torch2
+name: sts
 channels:
   - pytorch
   - defaults
