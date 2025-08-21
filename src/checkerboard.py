@@ -1,9 +1,7 @@
 import cv2
 from glob import glob
-import os
 import numpy as np
 from natsort import natsorted as nat
-import matplotlib.pyplot as plt
 
 class Checkerboard:
     def __init__(self, cam_idx, root_folder, save_found_cb, pattern_size, square_size, ransac):
@@ -31,15 +29,13 @@ class Checkerboard:
         
         self.obj_points = {}
         self.img_points = {}
-        # self.obj_points = []
-        # self.img_points = []
         self.corner_idx = []
         self.pairs = {}
         
         self.collect_checkerboard_corners()
         print(f"[INFO] Camera {self.cam_idx} initialized")
     
-    def find_checkerboard_corners(self, image, idx=0, use_sb=True):
+    def find_checkerboard_corners(self, image, use_sb=True):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
         if use_sb and hasattr(cv2, "findChessboardCornersSB"):
@@ -77,14 +73,9 @@ class Checkerboard:
             if img is None:
                 continue
             self.img_size = img.shape[:2][::-1]
-            found, corners = self.find_checkerboard_corners(img, idx=idx, use_sb=False)
+            found, corners = self.find_checkerboard_corners(img, use_sb=False)
             
-            # gray, found, corners = self.process_gray(img, idx)
-            # self.img_size = gray.shape
             if found:
-            #     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.0001)
-            #     corners = cv2.cornerSubPix(gray, corners, (11,11), (-1,-1), criteria)
-
                 self.obj_points[idx] = objp
                 self.img_points[idx] = corners
                 self.corner_idx.append(idx)
@@ -175,3 +166,48 @@ class Checkerboard:
     def update_R_T(self, rvecs_new, tvecs_new):
         self.R = cv2.Rodrigues(rvecs_new)
         self.T = cv2.Rodrigues(tvecs_new)
+        
+def matching(cbs, num_cb):
+    for i in range(num_cb):
+        for j in range(i+1,num_cb):
+            cbs[i].match_pairs(cbs[j])
+            cbs[j].pairs[cbs[i].cam_idx] = cbs[i].pairs[cbs[j].cam_idx]
+            print(f"[INFO] Cameras {(i, j)} have common detections at frames: {cbs[j].pairs[cbs[i].cam_idx]}")
+            
+def stereo_calibrate(objpoints, imgpoints1, imgpoints2, image_size, indices):
+    # 단일 카메라 보정
+    ret1, mtx1, dist1, rvecs1, tvecs1 = cv2.calibrateCamera(objpoints, imgpoints1, image_size, None, None)
+    ret2, mtx2, dist2, rvecs2, tvecs2 = cv2.calibrateCamera(objpoints, imgpoints2, image_size, None, None)
+
+    # 스테레오 보정
+    flags = cv2.CALIB_FIX_INTRINSIC 
+    criteria = (cv2.TERM_CRITERIA_MAX_ITER + cv2.TERM_CRITERIA_EPS, 100, 1e-5)
+
+    ret, _, _, _, _, R, T, E, F = cv2.stereoCalibrate(
+        objpoints, imgpoints1, imgpoints2,
+        mtx1, dist1, mtx2, dist2,
+        image_size, criteria=criteria, flags=flags
+    )
+    
+    dict_rvecs1, dict_tvecs1 = {}, {}
+    dict_rvecs2, dict_tvecs2 = {}, {}
+    
+    for cnt, idx in enumerate(indices):
+        dict_rvecs1[idx], dict_tvecs1[idx] = rvecs1[cnt], tvecs1[cnt]
+        dict_rvecs2[idx], dict_tvecs2[idx] = rvecs2[cnt], tvecs2[cnt]
+    
+    return {
+        "ret": ret,
+        "cameraMatrix1": mtx1,
+        "distCoeffs1": dist1,
+        "cameraMatrix2": mtx2,
+        "distCoeffs2": dist2,
+        "R": R,
+        "T": T,
+        "E": E,
+        "F": F,
+        "rvecs1":dict_rvecs1,
+        "tvecs1":dict_tvecs1,
+        "rvecs2":dict_rvecs2,
+        "tvecs2":dict_tvecs2,
+    }
